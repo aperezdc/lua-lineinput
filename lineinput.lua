@@ -58,7 +58,8 @@ local CTRL_U    = 21
 local CTRL_W    = 23
 local ESCAPE    = 27
 local BACKSPACE = 127
-
+local BYTE_0    = ("0"):byte()
+local BYTE_9    = ("9"):byte()
 
 -- XXX: This is very simple, recursive, and it does not handle cycles.
 -- Do not use with very deeply nested tables or tables with cycles.
@@ -350,7 +351,35 @@ local function handle_input(self)
       elseif byte == CTRL_E then
          self:move_end()
       elseif byte == ESCAPE then
-         -- TODO: Implement handling of escapes.
+         -- Read the next two bytes representing of the escape sequence.
+         local ch1 = co_yield()
+         local ch2 = co_yield()
+         if ch1 == "[" then  -- ESC [ sequences
+            local byte2 = ch2:byte()
+            if byte2 >= BYTE_0 and byte2 <= BYTE_9 then
+               -- Extended escape, read one additional character.
+               local ch3 = co_yield()
+               dprintf("escape sequence: [%c%s", byte2, ch3)
+               if ch3 == "~" then  -- ESC [ NUM ~
+                  if ch2 == "3" then  -- ESC [ 3 ~
+                     self:edit_delete()
+                  end
+               end
+            else
+               dprintf("escape sequence: [%c", byte2)
+               if ch2 == "A" then
+                  -- TODO: Up
+               elseif ch2 == "B" then
+                  -- TODO: Down
+               elseif ch2 == "C" then self:move_right()
+               elseif ch2 == "D" then self:move_left()
+               elseif ch2 == "H" then self:move_home()
+               elseif ch2 == "F" then self:move_end()
+               end
+            end
+         else
+            dprintf("escape sequence: %s%s (unhandled)", ch1, ch2)
+         end
       elseif byte >= 32 then
          self:insert(input)
       end
