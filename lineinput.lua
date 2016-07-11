@@ -318,11 +318,8 @@ local function handle_input(self)
    while true do
       local input = co_yield()
       local byte = input:byte()
-      if byte == ENTER then
-         return self.buf
-      end
-      if byte == CTRL_C then
-         return nil  -- TODO: Return a code other than CTRL_D
+      if byte == ENTER or byte == CTRL_C then
+         return byte, self.buf
       end
       if byte == BACKSPACE or input == 8 then
          self:edit_backspace()
@@ -330,7 +327,7 @@ local function handle_input(self)
          if #self.buf > 0 then
             self:edit_delete()
          else
-            return nil
+            return CTRL_D
          end
       elseif byte == CTRL_T then
          -- TODO: Swap current character with previous.
@@ -418,4 +415,9 @@ function State:feed(input)
 end
 
 
-return State
+return {
+   input = State,
+   INT   = CTRL_C,
+   EOF   = CTRL_D,
+   DONE  = ENTER,
+}

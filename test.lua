@@ -8,14 +8,22 @@
 
 local lineinput = require "lineinput"
 
-local input = lineinput(io.stdout.write, io.stdout.flush, io.stdout)
+local input = lineinput.input(io.stdout.write, io.stdout.flush, io.stdout)
 input:wrap(function ()
-   local line
-   -- repeat
+   while true do
+      local line, status
       input:start("input: ")
       repeat
-         line = input:feed(io.read(1))
-      until line
-      print("\n\rline: " .. line .. "\r")
-   -- until #line == 0
+         status, line = input:feed(io.read(1))
+      until status
+
+      if status == lineinput.DONE then
+         print(string.format("\n\rline: %q\r", line))
+      elseif status == lineinput.EOF then
+         print("\n\rEOF\r\n")
+         break
+      elseif status == lineinput.INT then
+         print(string.format("\n\rline: %q (interrupted)\r", line))
+      end
+   end
 end)
