@@ -234,6 +234,7 @@ end
 function State:edit_backspace()
    if self.pos > 1 and #self.buf > 0 then
       self.buf = self.buf:sub(1, -2)
+      self.pos = self.pos - 1
       refresh_line(self)
    end
 end
