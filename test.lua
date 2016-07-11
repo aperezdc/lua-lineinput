@@ -8,7 +8,7 @@
 
 local lineinput = require "lineinput"
 
-local input = lineinput.input(io.stdout.write, io.stdout.flush, io.stdout)
+local input = lineinput(io.stdout.write, io.stdout.flush, io.stdout)
 input:wrap(function ()
    while true do
       local line, status

@@ -108,7 +108,11 @@ local function do_write_nofd(self, bytes) return self.do_write(bytes) end
 local function do_flush_nofd(self) return self.do_flush() end
 local function do_flush_noop(self) end
 
-local State = {}
+local State = {
+   INT  = CTRL_C,
+   EOF  = CTRL_D,
+   DONE = ENTER,
+}
 State.__index = State
 
 setmetatable(State, { __call = function (self, write, flush, fd)
@@ -459,9 +463,4 @@ function State:feed(input)
 end
 
 
-return {
-   input = State,
-   INT   = CTRL_C,
-   EOF   = CTRL_D,
-   DONE  = ENTER,
-}
+return State
