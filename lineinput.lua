@@ -371,8 +371,41 @@ local function handle_input(self)
                local ch3 = co_yield()
                dprintf(self, "escape sequence: [%c%s", byte2, ch3)
                if ch3 == "~" then  -- ESC [ NUM ~
-                  if ch2 == "3" then  -- ESC [ 3 ~
-                     self:edit_delete()
+                  -- Others to consider:
+                  --   PageUp:   ESC [5~
+                  --   PageDown: ESC [6~
+                  if ch2 == "1" then self:move_home()
+                  elseif ch2 == "3" then self:edit_delete()
+                  elseif ch2 == "4" then self:move_end()
+                  end
+               elseif ch3 == ";" then  -- ESC [ NUM ; CHAR CHAR
+                  if ch2 == "1" then   -- ESC [1; CHAR CHAR
+                     local ch4 = co_yield()
+                     if ch4 == "3" or ch4 == "4" or ch4 == "5" or ch4 == "6" then
+                        -- ESC [1; MOD CHAR
+                        -- MOD is:
+                        --    3 for Alt
+                        --    4 for Alt-Shift
+                        --    5 for Ctrl
+                        --    6 for Ctrl-Shift
+                        --    8 for Ctrl-Alt-Shift
+                        local ch5 = co_yield()
+                        if ch5 == "A" then
+                           -- ${modifiers}-Up
+                        elseif ch5 == "B" then
+                           -- Ctrl-Down
+                        elseif ch5 == "C" then
+                           -- Ctrl-Right
+                        elseif ch5 == "D" then
+                           -- Ctrl-Left
+                        else
+                           dprintf(self, "unhandled escape: [1;5%s", ch5)
+                        end
+                     else
+                        dprintf(self, "unhandled escape: [1;%s", ch4)
+                     end
+                  else
+                     dprintf(self, "unhandled escape: [%s;", ch2)
                   end
                end
             else
