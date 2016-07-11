@@ -7,16 +7,27 @@
 --
 
 local P = require "posix"
-local bit = require "bit32"
+local utf8 = require "dromozoa.utf8"
+local wcwidth = require "wcwidth"
+local unidecode = require "lineinput.unidecode"
+local bit = (function()
+   local try_modules = { "bit", "bit32" }
+   for _, name in ipairs(try_modules)  do
+      local ok, mod = pcall(require, name)
+      if ok then return mod end
+   end
+   error("no 'bit'-compatible module found (tried: "
+      .. table.concat(try_modules, ", ") .. ")")
+end)()
 
-local error, assert, tonumber = error, assert, tonumber
-local setmetatable, type, pairs = setmetatable, type, pairs
+local pcall, error, assert, tonumber = pcall, error, assert, tonumber
+local select, setmetatable, type, pairs = select, setmetatable, type, pairs
 local co_create, co_yield = coroutine.create, coroutine.yield
 local co_resume = coroutine.resume
 local t_insert, t_concat = table.insert, table.concat
+local sprintf, s_char = string.format, string.char
 local d_traceback = debug.traceback
 local min, max = math.min, math.max
-local sprintf = string.format
 
 local refresh_line
 
@@ -60,8 +71,6 @@ local CTRL_U    = 21
 local CTRL_W    = 23
 local ESCAPE    = 27
 local BACKSPACE = 127
-local BYTE_0    = ("0"):byte()
-local BYTE_9    = ("9"):byte()
 
 -- XXX: This is very simple, recursive, and it does not handle cycles.
 -- Do not use with very deeply nested tables or tables with cycles.
@@ -72,6 +81,63 @@ local function deepcopy(t)
       n[name] = (type(value) == "table") and deepcopy(value) or value
    end
    return n
+end
+
+local function utf8len(s)
+   local len, invalid_index = utf8.len(s)
+   return len or assert(utf8.len(s:sub(1, invalid_index - 1)))
+end
+
+
+local TERMCELLS_OK       = 0
+local TERMCELLS_NONPRINT = 1
+local TERMCELLS_INVALID  = 2
+
+local function termcells(s)
+   local cells = 0
+   local f, s, var = utf8.codes(s)
+   while true do
+      local ok, pos, rune = pcall(f, s, var)
+      if not ok then
+         return TERMCELLS_INVALID, cells, var
+      end
+      if pos == nil then
+         break
+      end
+      local w = wcwidth(rune)
+      if w < 0 then
+         return TERMCELLS_NONPRINT, cells, var
+      end
+      var, cells = pos, cells + w
+   end
+   return TERMCELLS_OK, cells, -1  -- No offset
+end
+
+local function utf8sub(s, l, r)
+   local len = utf8len(s)
+
+   if r < 0 then
+      r = len + r + 1
+   end
+   if r <= l then
+      return ""
+   end
+
+   local lindex, rindex = 1, len
+   local n = 1
+   for pos, _ in utf8.codes(s) do
+      if n == l then
+         lindex = pos
+      elseif n == r then
+         rindex = pos
+      end
+      n = n + 1
+      if n >= len then
+         break
+      end
+   end
+
+   return s:sub(lindex, rindex)
 end
 
 local function enable_tty_raw(fd)
@@ -182,18 +248,29 @@ end
 
 -- No "local", this was forward-declared
 refresh_line = function (self)
-   local leftpos, pos = 1, self.pos
-   while #self.prompt + pos >= self.cols do
-      leftpos, pos = leftpos + 1, pos - 1
+   local _, prompt_cells, prompt_offset = termcells(self.prompt)
+   local _, buffer_cells, buffer_offset = termcells(self.buf)
+
+   if prompt_cells + buffer_cells + 5 <= self.cols then
+      self:tty_write(sprintf("\r%s%s\x1B[K\r\x1B[%dC",
+         self.prompt:sub(1, prompt_offset),
+         self.buf:sub(1, buffer_offset),
+         prompt_cells + self.pos - 1))
    end
-   local rightpos = #self.buf
-   while #self.prompt + rightpos > self.cols do
-      rightpos = rightpos - 1
+
+   -- Ensure there's some space for the prompt.
+   local prompt
+   if prompt_cells + 10 < self.cols then
+      if prompt_offset > 0 then
+         prompt = self.prompt:sub(1, prompt_offset)
+      else
+         prompt = self.prompt
+      end
+   else
+      prompt, prompt_cells = "> ", 2
    end
-   self:tty_write(sprintf("\r%s%s\x1B[K\r\x1B[%dC",
-      self.prompt,
-      self.buf:sub(leftpos, rightpos),
-      #self.prompt + self.pos - 1))
+   assert(prompt)
+
    self:tty_flush()
 end
 
@@ -232,7 +309,8 @@ end
 
 function State:edit_delete()
    if #self.buf > 0 and self.pos <= #self.buf then
-      self.buf = self.buf:sub(1, self.pos - 1) .. self.buf:sub(self.pos + 1, -1)
+      self.buf = utf8sub(self.buf, 1, self.pos - 1)
+              .. utf8sub(self.buf, self.pos + 1, -1)
       refresh_line(self)
    end
 end
@@ -240,9 +318,10 @@ end
 function State:edit_backspace()
    if self.pos > 1 and #self.buf > 0 then
       if self.pos > #self.buf then
-         self.buf = self.buf:sub(1, -2)
+         self.buf = utf8sub(self.buf, 1, -2)
       else
-         self.buf = self.buf:sub(1, self.pos - 2) .. self.buf:sub(self.pos, -1)
+         self.buf = utf8sub(self.buf, 1, self.pos - 2)
+                 .. utf8sub(self.buf, self.pos, -1)
       end
       self.pos = self.pos - 1
       refresh_line(self)
@@ -250,14 +329,18 @@ function State:edit_backspace()
 end
 
 function State:insert(input)
+   local cells = wcwidth(utf8.codepoint(input))
+   assert(cells >= 0)
    if self.pos == #self.buf then  -- Append input.
       self.buf = self.buf .. input
    elseif self.pos == 1 then  -- Prepend input.
       self.buf = input .. self.buf
    else  -- Insert in the middle
-      self.buf = self.buf:sub(1, self.pos) .. input .. self.buf:sub(self.pos + 1, -1)
+      self.buf = utf8sub(self.buf, 1, self.pos)
+              .. input
+              .. utf8sub(self.buf, self.pos + 1, -1)
    end
-   self.pos = self.pos + 1
+   self.pos = self.pos + cells
    refresh_line(self)
 end
 
@@ -297,7 +380,7 @@ local function query_columns(self)
          buf = ""  -- Clear buffer
          break
       end
-      buf = buf .. co_yield()
+      buf = buf .. s_char(co_yield())
    end
 
    -- Move to a column far, far away. The new position has the number of columns.
@@ -310,7 +393,7 @@ local function query_columns(self)
          col = tonumber(col)
          break
       end
-      buf = buf .. co_yield()
+      buf = buf .. s_char(co_yield())
    end
 
    -- Restore position, return number of colums
@@ -320,14 +403,9 @@ local function query_columns(self)
 end
 
 local function handle_input(self)
-   self:tty_write("\r")
-   if #self.prompt < self.cols then
-      self:tty_write(self.prompt)
-   end
-   self:tty_flush()
+   refresh_line(self)
    while true do
-      local input = co_yield()
-      local byte = input:byte()
+      local byte = co_yield()
       if byte == ENTER or byte == CTRL_C then
          return byte, self.buf
       end
@@ -341,11 +419,11 @@ local function handle_input(self)
          end
       elseif byte == CTRL_T then
          -- Swap current character with previous.
-         local prevchar = self.buf:sub(self.pos - 1, 1)
-         local curchar = self.buf:sub(self.pos, 1)
-         self.buf = self.buf:sub(1, self.pos - 2)
-               .. curchar .. prevchar
-               .. self.buf:sub(self.pos, -1)
+         local prevchar = utf8sub(self.buf, self.pos - 1, 1)
+         local curchar = utf8sub(self.buf, self.pos, 1)
+         self.buf = utf8sub(self.buf, 1, self.pos - 2)
+                 .. curchar .. prevchar
+                 .. utf8sub(self.buf, self.pos, -1)
          refresh_line(self)
       elseif byte == CTRL_B then
          self:move_left()
@@ -358,7 +436,7 @@ local function handle_input(self)
          refresh_line(self)
       elseif byte == CTRL_K then
          -- Delete from current position to end of line.
-         self.buf = self.buf:sub(1, self.pos)
+         self.buf = utf8sub(self.buf, 1, self.pos)
          refresh_line(self)
       elseif byte == CTRL_A then
          self:move_home()
@@ -368,67 +446,62 @@ local function handle_input(self)
          -- Read the next two bytes representing of the escape sequence.
          local ch1 = co_yield()
          local ch2 = co_yield()
-         if ch1 == "[" then  -- ESC [ sequences
-            local byte2 = ch2:byte()
-            if byte2 >= BYTE_0 and byte2 <= BYTE_9 then
+         if ch1 == 0x5B then  -- ESC [ sequences
+            if ch2 >= 0x30 and ch2 <= 0x39 then -- ESC [ NUM
                -- Extended escape, read one additional character.
                local ch3 = co_yield()
-               dprintf(self, "escape sequence: [%c%s", byte2, ch3)
-               if ch3 == "~" then  -- ESC [ NUM ~
+               dprintf(self, "escape sequence: [%c%c", ch2, ch3)
+               if ch3 == 0x7E then  -- ESC [ NUM ~
                   -- Others to consider:
                   --   PageUp:   ESC [5~
                   --   PageDown: ESC [6~
-                  if ch2 == "1" then self:move_home()
-                  elseif ch2 == "3" then self:edit_delete()
-                  elseif ch2 == "4" then self:move_end()
+                  if     ch2 == 0x31 then self:move_home()    -- ESC [1~
+                  elseif ch2 == 0x33 then self:edit_delete()  -- ESC [3~
+                  elseif ch2 == 0x34 then self:move_end()     -- ESC [4~
                   end
-               elseif ch3 == ";" then  -- ESC [ NUM ; CHAR CHAR
-                  if ch2 == "1" then   -- ESC [1; CHAR CHAR
+               elseif ch3 == 0x3B then  -- ESC [ NUM ; CHAR CHAR
+                  if ch2 == 0x31 then   -- ESC [1; CHAR CHAR
                      local ch4 = co_yield()
-                     if ch4 == "3" or ch4 == "4" or ch4 == "5" or ch4 == "6" then
-                        -- ESC [1; MOD CHAR
-                        -- MOD is:
+                     if ch4 >= 0x33 and ch4 <= 0x36 or ch4 == 0x38 then
+                        -- ESC [1; MODIFIER CHAR
+                        -- MODIFIER:
                         --    3 for Alt
                         --    4 for Alt-Shift
                         --    5 for Ctrl
                         --    6 for Ctrl-Shift
                         --    8 for Ctrl-Alt-Shift
                         local ch5 = co_yield()
-                        if ch5 == "A" then
-                           -- ${modifiers}-Up
-                        elseif ch5 == "B" then
-                           -- Ctrl-Down
-                        elseif ch5 == "C" then
-                           -- Ctrl-Right
-                        elseif ch5 == "D" then
-                           -- Ctrl-Left
+                        if     ch5 == 0x41 then -- MODIFIER-Up
+                        elseif ch5 == 0x42 then -- MODIFIER-Down
+                        elseif ch5 == 0x43 then -- MODIFIER-Right
+                        elseif ch5 == 0x44 then -- MODIFIER-Left
                         else
-                           dprintf(self, "unhandled escape: [1;5%s", ch5)
+                           dprintf(self, "unhandled escape: [1;%c%c", ch4, ch5)
                         end
                      else
-                        dprintf(self, "unhandled escape: [1;%s", ch4)
+                        dprintf(self, "unhandled escape: [1;%c", ch4)
                      end
                   else
-                     dprintf(self, "unhandled escape: [%s;", ch2)
+                     dprintf(self, "unhandled escape: [%c;", ch2)
                   end
                end
             else
-               dprintf(self, "escape sequence: [%c", byte2)
-               if ch2 == "A" then
-                  -- TODO: Up
-               elseif ch2 == "B" then
-                  -- TODO: Down
-               elseif ch2 == "C" then self:move_right()
-               elseif ch2 == "D" then self:move_left()
-               elseif ch2 == "H" then self:move_home()
-               elseif ch2 == "F" then self:move_end()
+               dprintf(self, "escape sequence: [%c", ch2)
+               if     ch2 == 0x41 then -- Up
+               elseif ch2 == 0x42 then -- Down
+               elseif ch2 == 0x43 then self:move_right()
+               elseif ch2 == 0x44 then self:move_left()
+               elseif ch2 == 0x46 then self:move_end()
+               elseif ch2 == 0x48 then self:move_home()
                end
             end
          else
-            dprintf(self, "escape sequence: %s%s (unhandled)", ch1, ch2)
+            dprintf(self, "escape sequence: %c%c (unhandled)", ch1, ch2)
          end
-      elseif byte >= 32 then
-         self:insert(input)
+      else
+         local utfseq, nbytes = unidecode(co_yield, byte)
+         dprintf(self, "UTF8-%d sequence: %q", nbytes, utfseq)
+         self:insert(utfseq)
       end
       dprintf(self, "buf = %q", self.buf)
    end
@@ -446,10 +519,10 @@ function State:start(prompt)
    assert(co_resume(self._coro, self))
 end
 
-function State:feed(input)
-   dprintf(self, "feed(%q), coro=%s", input, self._coro)
-   local ok, status, line = co_resume(self._coro, input)
-   dprintf(self, "feed --> yielded=%s, status=%s, pos=%s", ok, status, self.pos)
+function State:feed_byte(byte)
+   local ok, status, line = co_resume(self._coro, byte)
+   dprintf(self, "byte 0x%02x (%q) -> yielded=%s, status=%s, pos=%s",
+           byte, s_char(byte), ok, status, self.pos)
    if not ok then
       error(status)
    end
@@ -462,5 +535,13 @@ function State:feed(input)
    return status, line
 end
 
+function State:feed(input)
+   for i = 1, #input do
+      local status, line = self:feed_byte(input:byte(i))
+      if status then
+         return status, line
+      end
+   end
+end
 
 return State

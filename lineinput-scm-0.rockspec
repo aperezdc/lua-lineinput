@@ -11,6 +11,8 @@ source = {
 dependencies = {
    "lua >= 5.1",
    "luaposix ~> 33",
+   "dromozoa-utf8",
+   "wcwidth",
    "bit32",
 }
 build = {
