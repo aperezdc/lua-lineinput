@@ -227,8 +227,8 @@ function State:move_end()
 end
 
 function State:edit_delete()
-   if #self.buf > 0 and self.pos < #self.buf then
-      self.buf = self.buf:sub(1, self.pos) .. self.buf:sub(self.pos + 1, -1)
+   if #self.buf > 0 and self.pos <= #self.buf then
+      self.buf = self.buf:sub(1, self.pos - 1) .. self.buf:sub(self.pos + 1, -1)
       refresh_line(self)
    end
 end
