@@ -204,7 +204,7 @@ function State:move_left()
 end
 
 function State:move_right()
-   if self.pos < #self.buf then
+   if self.pos <= #self.buf then
       self.pos = self.pos + 1
       refresh_line(self)
    end
