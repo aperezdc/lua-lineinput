@@ -183,9 +183,10 @@ local function refresh_line(self)
    while #self.prompt + rightpos > self.cols do
       rightpos = rightpos - 1
    end
-   self:tty_write(sprintf("\r%s%s\x1B[K",
+   self:tty_write(sprintf("\r%s%s\x1B[K\r\x1B[%dC",
       self.prompt,
-      self.buf:sub(leftpos, rightpos)))
+      self.buf:sub(leftpos, rightpos),
+      #self.prompt + self.pos - 1))
    self:tty_flush()
 end
 
