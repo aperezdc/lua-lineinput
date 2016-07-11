@@ -406,7 +406,7 @@ end
 function State:feed(input)
    dprintf("feed(%q), coro=%s", input, self._coro)
    local ok, res = co_resume(self._coro, input)
-   dprintf("feed --> yielded=%s, res=%s", ok, res)
+   dprintf("feed --> yielded=%s, res=%s, pos=%s", ok, res, self.pos)
    if not ok then
       error(res)
    end
