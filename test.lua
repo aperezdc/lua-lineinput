@@ -20,7 +20,7 @@ input:wrap(function ()
       if status == lineinput.DONE then
          print(string.format("\n\rline: %q\r", line))
       elseif status == lineinput.EOF then
-         print("\n\rEOF\r\n")
+         print("\n\rEOF\r")
          break
       elseif status == lineinput.INT then
          print(string.format("\n\rline: %q (interrupted)\r", line))
