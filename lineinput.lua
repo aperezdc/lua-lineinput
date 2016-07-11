@@ -18,18 +18,20 @@ local d_traceback = debug.traceback
 local min, max = math.min, math.max
 local sprintf = string.format
 
+local refresh_line
+
 local dprintf = (function ()
    local env_var = os.getenv("LINEINPUT_DEBUG")
    if env_var and #env_var > 0 and env_var ~= "0" then
-      local out = io.stderr
-      return function (fmt, ...)
-         out:write("[lineinput] ")
-         out:write(fmt:format(...))
-         out:write("\r\n")
-         out:flush()
+      return function (self, fmt, ...)
+         self:tty_write("\r\x1B[K[lineinput] ")
+         self:tty_write(fmt:format(...))
+         self:tty_write("\r\n")
+         self:tty_flush()
+         refresh_line(self)
       end
    else
-      return function (fmt, ...) end
+      return function (...) end
    end
 end)()
 
@@ -131,7 +133,7 @@ setmetatable(State, { __call = function (self, write, flush, fd)
 end })
 
 function State:tty_write(bytes)
-   -- dprintf(":write(%q)", bytes)
+   -- dprintf(self, ":write(%q)", bytes)
    return self.do_write(self.use_fd, bytes)
 end
 
@@ -174,8 +176,8 @@ function State:tty_restore(fd)
    return true
 end
 
--- TODO: Rework
-local function refresh_line(self)
+-- No "local", this was forward-declared
+refresh_line = function (self)
    local leftpos, pos = 1, self.pos
    while #self.prompt + pos >= self.cols do
       leftpos, pos = leftpos + 1, pos - 1
@@ -285,7 +287,7 @@ local function query_columns(self)
    local saved_col
    while true do
       saved_col = buf:match(cursor_position_response)
-      -- dprintf("query_columns: buf=%q, row=%s, col=%s", buf, saved_row, saved_col)
+      -- dprintf(self, "query_columns: buf=%q, row=%s, col=%s", buf, saved_row, saved_col)
       if saved_col then
          saved_col = tonumber(saved_col)
          buf = ""  -- Clear buffer
@@ -299,7 +301,7 @@ local function query_columns(self)
    local col
    while true do
       col = buf:match(cursor_position_response)
-      -- dprintf("query_columns: buf=%q, row=%s, col=%s", buf, row, col)
+      -- dprintf(self, "query_columns: buf=%q, row=%s, col=%s", buf, row, col)
       if col then
          col = tonumber(col)
          break
@@ -309,7 +311,7 @@ local function query_columns(self)
 
    -- Restore position, return number of colums
    self:tty_write(sprintf("\x1B[%dD", col - saved_col))
-   dprintf("query_columns -> %d", col)
+   dprintf(self, "query_columns -> %d", col)
    return col
 end
 
@@ -367,14 +369,14 @@ local function handle_input(self)
             if byte2 >= BYTE_0 and byte2 <= BYTE_9 then
                -- Extended escape, read one additional character.
                local ch3 = co_yield()
-               dprintf("escape sequence: [%c%s", byte2, ch3)
+               dprintf(self, "escape sequence: [%c%s", byte2, ch3)
                if ch3 == "~" then  -- ESC [ NUM ~
                   if ch2 == "3" then  -- ESC [ 3 ~
                      self:edit_delete()
                   end
                end
             else
-               dprintf("escape sequence: [%c", byte2)
+               dprintf(self, "escape sequence: [%c", byte2)
                if ch2 == "A" then
                   -- TODO: Up
                elseif ch2 == "B" then
@@ -386,12 +388,12 @@ local function handle_input(self)
                end
             end
          else
-            dprintf("escape sequence: %s%s (unhandled)", ch1, ch2)
+            dprintf(self, "escape sequence: %s%s (unhandled)", ch1, ch2)
          end
       elseif byte >= 32 then
          self:insert(input)
       end
-      dprintf("buf = %q", self.buf)
+      dprintf(self, "buf = %q", self.buf)
    end
 end
 
@@ -408,14 +410,13 @@ function State:start(prompt)
 end
 
 function State:feed(input)
-   dprintf("feed(%q), coro=%s", input, self._coro)
+   dprintf(self, "feed(%q), coro=%s", input, self._coro)
    local ok, status, line = co_resume(self._coro, input)
-   dprintf("feed --> yielded=%s, status=%s, pos=%s", ok, status, self.pos)
+   dprintf(self, "feed --> yielded=%s, status=%s, pos=%s", ok, status, self.pos)
    if not ok then
       error(status)
    end
    if status and self.cols < 0 then
-      dprintf("COLUMNS: %d", status)
       self.cols = status
       self._coro = co_create(handle_input)
       assert(co_resume(self._coro, self))
