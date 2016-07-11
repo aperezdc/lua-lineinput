@@ -221,7 +221,7 @@ end
 
 function State:move_end()
    if self.pos < #self.buf then
-      self.pos = #self.buf
+      self.pos = #self.buf + 1
       refresh_line(self)
    end
 end
