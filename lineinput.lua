@@ -330,7 +330,13 @@ local function handle_input(self)
             return CTRL_D
          end
       elseif byte == CTRL_T then
-         -- TODO: Swap current character with previous.
+         -- Swap current character with previous.
+         local prevchar = self.buf:sub(self.pos - 1, 1)
+         local curchar = self.buf:sub(self.pos, 1)
+         self.buf = self.buf:sub(1, self.pos - 2)
+               .. curchar .. prevchar
+               .. self.buf:sub(self.pos, -1)
+         refresh_line(self)
       elseif byte == CTRL_B then
          self:move_left()
       elseif byte == CTRL_F then
