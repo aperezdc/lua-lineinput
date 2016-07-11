@@ -405,19 +405,19 @@ end
 
 function State:feed(input)
    dprintf("feed(%q), coro=%s", input, self._coro)
-   local ok, res = co_resume(self._coro, input)
-   dprintf("feed --> yielded=%s, res=%s, pos=%s", ok, res, self.pos)
+   local ok, status, line = co_resume(self._coro, input)
+   dprintf("feed --> yielded=%s, status=%s, pos=%s", ok, status, self.pos)
    if not ok then
-      error(res)
+      error(status)
    end
-   if res and self.cols < 0 then
-      dprintf("COLUMNS: %d", res)
-      self.cols = res
+   if status and self.cols < 0 then
+      dprintf("COLUMNS: %d", status)
+      self.cols = status
       self._coro = co_create(handle_input)
       assert(co_resume(self._coro, self))
       return nil
    end
-   return res
+   return status, line
 end
 
 
